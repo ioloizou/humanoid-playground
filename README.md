@@ -1,6 +1,2 @@
 # humanoid-playground
-
-To visualise the g1 in the meshcat-viewer
-
-```bash
-python3 -i g1_meshcat-viewer.py
+A repository where software tools will be tested on a humanoids robot

@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'g1_visualisation'
+package_name = 'g1_pinnochio'
 
 setup(
     name=package_name,
@@ -14,7 +14,7 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='ioloizou',
-    maintainer_email='ioloizou@todo.todo',
+    maintainer_email='yiannisloizou@gmail.com',
     description='TODO: Package description',
     license='TODO: License declaration',
     tests_require=['pytest'],
