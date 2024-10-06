@@ -1,2 +1,2 @@
 # humanoid-playground
-A repository where software tools will be tested on a humanoids robot
+A repository where physics based theories and software tools will be tested on a humanoid robot
