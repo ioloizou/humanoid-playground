@@ -2,9 +2,9 @@
 
 # TODO: 
 # - Add option for movement to start from current position - Done
+# - Make general kinematic sub tree simulate function - Done
+# - Make IK respect world frame, i need to try oMf.action
 # - Make a whole body kinematic simulation function
-# - Check if IK is respecting world frame
-# - Make general kinematic sub tree simulate function
 
 import pinocchio as pin
 import numpy as np
@@ -82,19 +82,53 @@ def display_robot_configuration(q, viz):
     viz.display(q)
     viz.displayVisuals(True)
 
-def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True, new_window=False, q_previous=None):
+def get_kinematic_tree(tree_name):
     """
-    Simulates the movement of the left hand for a given duration.
+    Retrieve the starting and ending joint IDs for a specified kinematic tree.
+    Args:
+        tree_name (str): The name of the kinematic tree. 
+                         Options are "left_hand", "right_hand", "left_leg", "right_leg".
+    Returns:
+        tuple: A tuple containing the starting joint ID and ending joint ID.
+    """
+    
+    kinematic_trees = {
+    "left_hand": {
+        "starting_joint_id": model.getJointId("left_shoulder_pitch_joint"),
+        "ending_joint_id": model.getJointId("left_wrist_roll_joint")
+    },
+    "right_hand": {
+        "starting_joint_id": model.getJointId("right_shoulder_pitch_joint"),
+        "ending_joint_id": model.getJointId("right_wrist_roll_joint")
+    },
+    "left_leg": {
+        "starting_joint_id": model.getJointId("left_hip_pitch_joint"),
+        "ending_joint_id": model.getJointId("left_ankle_roll_joint")
+    },
+    "right_leg": {
+        "starting_joint_id": model.getJointId("right_hip_pitch_joint"),
+        "ending_joint_id": model.getJointId("right_ankle_roll_joint")
+    }
+    }
+    return kinematic_trees[tree_name]["starting_joint_id"], kinematic_trees[tree_name]["ending_joint_id"] 
+
+def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True, new_window=False, q_previous=None):
+    """
+    Simulates the movement of a specified kinematic sub-tree for a given duration.
     
     Args:
         model (pin.Model): The Pinocchio model.
         data (pin.Data): The Pinocchio data.
         viz (MeshcatVisualizer): The Meshcat visualizer.
         q_initial (np.ndarray): The initial configuration of the robot.
-        starting_joint_id (int): The joint ID of the left shoulder.
-        ending_joint_id (int): The joint ID of the left wrist.
+        starting_joint_id (int): The joint ID where the kinematic sub-tree starts.
+        ending_joint_id (int): The joint ID where the kinematic sub-tree ends.
+        v_desired (np.ndarray): The desired velocity of the end-effector [vx, vy, vz, wx, wy, wz].
         duration (float): The duration of the simulation in seconds.
         sleep_time (float): The sleep time between each simulation step in seconds.
+        first_time (bool): Flag to indicate if this is the first time the simulation is run.
+        new_window (bool): Flag to indicate if a new window should be opened for the viewer.
+        q_previous (np.ndarray, optional): The previous configuration of the robot. Defaults to None.
     """
     # Wait 4 seconds before starting the simulation if launch for first time
     if first_time or new_window:
@@ -104,54 +138,51 @@ def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, 
 
     # Initialize the configuration
     if q_previous is None:
-        q_current_left_hand = q_initial.copy()
+        q_current = q_initial.copy()
     else:
-        q_current_left_hand = q_previous.copy()
+        q_current = q_previous.copy()
 
     # Run the simulation for the specified duration
     start_time = time.time()
     
     while time.time() - start_time < duration:
         
-        pin.forwardKinematics(model, data, q_current_left_hand)
+        pin.forwardKinematics(model, data, q_current)
 
         # Transform the Jacobian from the left wrist to the world frame
-        oMwr = data.oMf[ending_joint_id]
-        oRwr = oMwr.rotation
+        oMf = data.oMf[ending_joint_id]
+        oRf = oMf.rotation
 
         # Calculate the Jacobian from left wrist
-        J_left_hand = pin.computeJointJacobian(model, data, q_current_left_hand, ending_joint_id)
+        J = pin.computeJointJacobian(model, data, q_current, ending_joint_id)
         
         # Align the Jacobian with the world frame
-        J_left_hand[:3, :] = oRwr @ J_left_hand[:3, :]
-        J_left_hand[3:, :] = oRwr @ J_left_hand[3:, :]
+        J[:3, :] = oRf @ J[:3, :]
+        J[3:, :] = oRf @ J[3:, :]            
 
         # Extract the relevant columns for the left hand movement
-        J_left_hand_reduced = J_left_hand[:, model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q]  
+        J_reduced = J[:, model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q]  
 
         # Compute the pseudo-inverse of the reduced Jacobian
-        J_left_hand_pseudo_inv = np.linalg.pinv(J_left_hand_reduced)
+        J_reduced_pseudo_inv = np.linalg.pinv(J_reduced)
 
-        q_dot_left_hand = J_left_hand_pseudo_inv @ v_desired
+        q_dot_reduced = J_reduced_pseudo_inv @ v_desired
         
-        # print("Reduced q: ", q_dot_left_hand)
+        # print("Reduced q: ", q_dot_reduced)
 
-        q_dot_full_left_hand = np.zeros(model.nv)
+        q_dot_full = np.zeros(model.nv)
 
-        q_dot_full_left_hand[model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q] = q_dot_left_hand
+        q_dot_full[model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q] = q_dot_reduced
         
-        q_current_left_hand = pin.integrate(model, q_current_left_hand, q_dot_full_left_hand * 0.1)
+        q_current = pin.integrate(model, q_current, q_dot_full * 0.1)
 
-        display_robot_configuration(q_current_left_hand, viz)
+        display_robot_configuration(q_current, viz)
         time.sleep(sleep_time)  # Sleep to simulate real-time update
     
-    return q_current_left_hand 
+    return q_current 
 
 # Parse the URDF file
-model = parse_urdf()[0]
-collision_model = parse_urdf()[1]
-visual_model = parse_urdf()[2]
-data = parse_urdf()[3]
+model, collision_model, visual_model, data = parse_urdf()
 
 # Initialize the viewer
 new_window = True
@@ -163,15 +194,14 @@ q_feet[2] = 0.8
 
 display_robot_configuration(q_feet, viz)
 
-# Get the kinematic tree of the left hand
-starting_joint_id = model.getJointId("left_shoulder_pitch_joint")
-ending_joint_id = model.getJointId("left_wrist_roll_joint")
+# Choose one of the following kinematic trees: right hand, left hand, right leg or left leg
+starting_joint_id, ending_joint_id  = get_kinematic_tree("right_leg")
 
 # Initialize the configuration
-q_current_left_hand = q_feet.copy()
+q_current = q_feet.copy()
 
-# Define the desired velocity of the left hand
-v_left_hand = np.array([0., 0.2, 0., 0., 0., 0.])
+# Define the desired velocity of the left hand [vx, vy, vz, wx, wy, wz]
+v_desired = np.array([0.1, 0., 0., 0., 0., 0.])
 
-# Call the function with the appropriate arguments
-q_previous = simulate_left_hand_movement(model, data, viz, q_feet, starting_joint_id, ending_joint_id, v_left_hand)
+# Simulating the inverse kinematics
+q_previous = simulate_movement(model, data, viz, q_current, starting_joint_id, ending_joint_id, v_desired)
