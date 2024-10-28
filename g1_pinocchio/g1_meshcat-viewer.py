@@ -1,12 +1,15 @@
 # This script is used to compute and visualize the inverse kinematics of the robot in MeshCat.
 
+# TODO: 
+# - Add option for movement to start from current position - Done
+# - Make a whole body kinematic simulation function
+# - Check if IK is respecting world frame
+# - Make general kinematic sub tree simulate function
+
 import pinocchio as pin
 import numpy as np
 import sys
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from os.path import dirname, join, abspath
-from IPython import get_ipython
 
 from pinocchio.visualize import MeshcatVisualizer
 import time
@@ -24,7 +27,6 @@ def parse_urdf():
             - data (pin.Data): The varying part of the model.
     """
     
-    
     pinocchio_model_dir = join(dirname(dirname(str(abspath(__file__)))), "g1_description")
 
     model_path = str(pinocchio_model_dir)
@@ -40,11 +42,15 @@ def parse_urdf():
     
     return model, collision_model, visual_model, data
 
-def init_viewer():
+def init_viewer(new_window=True):
     """
     Initializes a MeshCat visualizer.
     Starts a new MeshCat server and client, and initializes the viewer with the given model, collision model, and visual model.
     If the MeshCat library is not installed, an ImportError is caught, and an error message is printed before exiting the program.
+
+    Args:
+        new_window (bool): A flag to indicate whether to open a new window for the viewer. Default is True.
+
     Returns:
         MeshcatVisualizer: An instance of the Meshcat visualizer.
     """
@@ -52,7 +58,7 @@ def init_viewer():
     # Start a new MeshCat server and client.
     try:
         viz = MeshcatVisualizer(model, collision_model, visual_model)
-        viz.initViewer(open=False)
+        viz.initViewer(open=new_window)
     except ImportError as err:
         print(
             "Error while initializing the viewer. It seems you should install Python meshcat"
@@ -64,17 +70,19 @@ def init_viewer():
     viz.loadViewerModel()
     return viz
 
-def display_robot_configuration(q):
+def display_robot_configuration(q, viz):
     """
-    Loads the robot model into the viewer and displays its neutral configuration.
-    This function initializes the viewer with the robot model and sets the robot
-    to its default (neutral) configuration for visualization.
+    Loads the robot model into the viewer and displays its configuration.
+
+    Args:
+        q (np.ndarray): The robot configuration.
+        viz (MeshcatVisualizer): The Meshcat visualizer.
     """    
     # Display a robot configuration.
     viz.display(q)
     viz.displayVisuals(True)
 
-def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True):
+def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True, new_window=False, q_previous=None):
     """
     Simulates the movement of the left hand for a given duration.
     
@@ -89,16 +97,20 @@ def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, 
         sleep_time (float): The sleep time between each simulation step in seconds.
     """
     # Wait 4 seconds before starting the simulation if launch for first time
-    if first_time:
+    if first_time or new_window:
         time.sleep(4)
     else:
         time.sleep(1)
 
     # Initialize the configuration
-    q_current_left_hand = q_initial.copy()
+    if q_previous is None:
+        q_current_left_hand = q_initial.copy()
+    else:
+        q_current_left_hand = q_previous.copy()
 
     # Run the simulation for the specified duration
     start_time = time.time()
+    
     while time.time() - start_time < duration:
         
         pin.forwardKinematics(model, data, q_current_left_hand)
@@ -122,7 +134,7 @@ def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, 
 
         q_dot_left_hand = J_left_hand_pseudo_inv @ v_desired
         
-        print("Reduced q: ", q_dot_left_hand)
+        # print("Reduced q: ", q_dot_left_hand)
 
         q_dot_full_left_hand = np.zeros(model.nv)
 
@@ -130,25 +142,26 @@ def simulate_left_hand_movement(model, data, viz, q_initial, starting_joint_id, 
         
         q_current_left_hand = pin.integrate(model, q_current_left_hand, q_dot_full_left_hand * 0.1)
 
-        viz.display(q_current_left_hand)
+        display_robot_configuration(q_current_left_hand, viz)
         time.sleep(sleep_time)  # Sleep to simulate real-time update
+    
+    return q_current_left_hand 
 
+# Parse the URDF file
 model = parse_urdf()[0]
 collision_model = parse_urdf()[1]
 visual_model = parse_urdf()[2]
 data = parse_urdf()[3]
 
-viz = init_viewer()
+# Initialize the viewer
+new_window = True
+viz = init_viewer(new_window)
 
-q_neutral = pin.neutral(model)
-
-display_robot_configuration(q_neutral)
-    
 # Robot with the feet on the meshcat ground    
-q_feet = q_neutral.copy()
+q_feet = pin.neutral(model)
 q_feet[2] = 0.8
 
-display_robot_configuration(q_feet)
+display_robot_configuration(q_feet, viz)
 
 # Get the kinematic tree of the left hand
 starting_joint_id = model.getJointId("left_shoulder_pitch_joint")
@@ -158,7 +171,7 @@ ending_joint_id = model.getJointId("left_wrist_roll_joint")
 q_current_left_hand = q_feet.copy()
 
 # Define the desired velocity of the left hand
-v_left_hand = np.array([0., 0., 0., 1., 0., 0.])
+v_left_hand = np.array([0., 0.2, 0., 0., 0., 0.])
 
 # Call the function with the appropriate arguments
-simulate_left_hand_movement(model, data, viz, q_feet, starting_joint_id, ending_joint_id, v_left_hand)
+q_previous = simulate_left_hand_movement(model, data, viz, q_feet, starting_joint_id, ending_joint_id, v_left_hand)
