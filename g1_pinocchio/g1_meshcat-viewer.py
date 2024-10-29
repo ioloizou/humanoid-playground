@@ -3,8 +3,9 @@
 # TODO: 
 # - Add option for movement to start from current position - Done
 # - Make general kinematic sub tree simulate function - Done
+# - Add visualization of the frame of the end effector with meshcat_shapes
+# - Add Loop rate limiter
 # - Make IK respect world frame, i need to try oMf.action
-# - Make a whole body kinematic simulation function
 
 import pinocchio as pin
 import numpy as np
@@ -195,7 +196,7 @@ q_feet[2] = 0.8
 display_robot_configuration(q_feet, viz)
 
 # Choose one of the following kinematic trees: right hand, left hand, right leg or left leg
-starting_joint_id, ending_joint_id  = get_kinematic_tree("right_leg")
+starting_joint_id, ending_joint_id  = get_kinematic_tree("right_hand")
 
 # Initialize the configuration
 q_current = q_feet.copy()
