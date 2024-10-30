@@ -3,14 +3,14 @@
 # TODO: 
 # - Add option for movement to start from current position - Done
 # - Make general kinematic sub tree simulate function - Done
-# - Add visualization of the frame of the end effector with meshcat_shapes
-# - Add Loop rate limiter
+# - Add visualization of the frame of the end effector with meshcat_shapes - Not finished
 # - Make IK respect world frame, i need to try oMf.action
 
 import pinocchio as pin
 import numpy as np
 import sys
 from os.path import dirname, join, abspath
+import meshcat_shapes
 
 from pinocchio.visualize import MeshcatVisualizer
 import time
@@ -113,6 +113,15 @@ def get_kinematic_tree(tree_name):
     }
     return kinematic_trees[tree_name]["starting_joint_id"], kinematic_trees[tree_name]["ending_joint_id"] 
 
+def update_visual_frame(viz, model, data, ending_joint_id):
+  # Need to make joint to frame. 
+  ee_frame = viz.viewer["ending_joint_id"]
+
+  oMf_hand = data.oMf[ending_joint_id]
+  ee_frame.set_transform(oMf_hand.homogeneous)
+
+  meshcat_shapes.frame(ee_frame)
+
 def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True, new_window=False, q_previous=None):
     """
     Simulates the movement of a specified kinematic sub-tree for a given duration.
@@ -149,6 +158,7 @@ def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joi
     while time.time() - start_time < duration:
         
         pin.forwardKinematics(model, data, q_current)
+        pin.updateFramePlacements(model, data)
 
         # Transform the Jacobian from the left wrist to the world frame
         oMf = data.oMf[ending_joint_id]
@@ -177,6 +187,7 @@ def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joi
         
         q_current = pin.integrate(model, q_current, q_dot_full * 0.1)
 
+        update_visual_frame(viz, model, data, ending_joint_id)
         display_robot_configuration(q_current, viz)
         time.sleep(sleep_time)  # Sleep to simulate real-time update
     
