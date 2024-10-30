@@ -10,7 +10,6 @@ def init_viewer(new_window=True):
     """
     Initializes a MeshCat visualizer.
     Starts a new MeshCat server and client, and initializes the viewer with the given model, collision model, and visual model.
-    If the MeshCat library is not installed, an ImportError is caught, and an error message is printed before exiting the program.
 
     Args:
         new_window (bool): A flag to indicate whether to open a new window for the viewer. Default is True.
@@ -20,18 +19,12 @@ def init_viewer(new_window=True):
     """
 
     # Start a new MeshCat server and client.
-    try:
-        viz = MeshcatVisualizer(model, collision_model, visual_model)
-        viz.initViewer(open=new_window)
-    except ImportError as err:
-        print(
-            "Error while initializing the viewer. It seems you should install Python meshcat"
-        )
-        print(err)
-        sys.exit(0)
+    viz = MeshcatVisualizer(model, collision_model, visual_model)
+    viz.initViewer(open=new_window)
 
     # Load the robot in the viewer.
     viz.loadViewerModel()
+
     return viz
 
 def display_robot_configuration(q, viz):
@@ -46,10 +39,12 @@ def display_robot_configuration(q, viz):
     viz.display(q)
     viz.displayVisuals(True)
 
-def update_visual_frame(viz, model, data):
-  ee_frame = viz.viewer["panda_joint8"]
+def update_visual_frame(viz, model, data, frame_name):
+  """Updates the visual frame in the viewer."""
+  
+  ee_frame = viz.viewer[frame_name]
 
-  oMf_hand = data.oMf[model.getFrameId("panda_joint8")]
+  oMf_hand = data.oMf[model.getFrameId(frame_name)]
   ee_frame.set_transform(oMf_hand.homogeneous)
 
   meshcat_shapes.frame(ee_frame)
@@ -90,21 +85,17 @@ def simulate_movement(viz, model, data, q_initial, v_desired, new_window, durati
         pin.forwardKinematics(model, data, q_current)
         pin.updateFramePlacements(model, data)
 
-        # Transform the Jacobian from the joint 7 to the world frame
-        oMf = data.oMf[7]
-        oRf = oMf.rotation
+        # Frame name of the end effector
+        frame_name = "panda_hand"
+        idx_tool = model.getFrameId(frame_name)
 
-        J = pin.computeJointJacobian(model, data, q_current, 7)
-
-        # Align the Jacobian with the world frame
-        J[:3, :] = oRf @ J[:3, :]
-        J[3:, :] = oRf @ J[3:, :]  
+        J = pin.computeFrameJacobian(model, data, q_current, idx_tool, pin.LOCAL_WORLD_ALIGNED) 
 
         qdot = np.linalg.pinv(J) @ v_desired
 
         q_current = pin.integrate(model, q_current, qdot * dt)
 
-        update_visual_frame(viz, model, data)
+        update_visual_frame(viz, model, data, frame_name)
         display_robot_configuration(q_current, viz)
 
         time.sleep(dt)  # Sleep to simulate real-time update
@@ -123,7 +114,7 @@ new_window = True
 viz = init_viewer(new_window)
 
 # Set the initial configuration of the robot
-q0 = np.array([0.0, -1., 0.5, -2.5, 0.0, 1.5, 0.7, 0., 0.])
+q0 =np.array([0,-0.785398163397, 0, -2.35619449019, 0,1.57079632679,0.785398163397, 0., 0.])
 
 display_robot_configuration(q0, viz)
 
