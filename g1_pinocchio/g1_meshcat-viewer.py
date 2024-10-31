@@ -3,7 +3,7 @@
 # TODO: 
 # - Add option for movement to start from current position - Done
 # - Make general kinematic sub tree simulate function - Done
-# - Add visualization of the frame of the end effector with meshcat_shapes - Not finished
+# - Add visualization of the frame of the end effector with meshcat_shapes - Not finished, make the 55 general
 # - Make IK respect world frame, i need to try oMf.action
 
 import pinocchio as pin
@@ -85,44 +85,100 @@ def display_robot_configuration(q, viz):
 
 def get_kinematic_tree(tree_name):
     """
-    Retrieve the starting and ending joint IDs for a specified kinematic tree.
+    Retrieve the starting and ending joint IDs and frame IDs for a specified kinematic tree.
     Args:
         tree_name (str): The name of the kinematic tree. 
                          Options are "left_hand", "right_hand", "left_leg", "right_leg".
     Returns:
-        tuple: A tuple containing the starting joint ID and ending joint ID.
+        tuple: A tuple containing the starting joint ID, ending joint ID, starting frame ID, and ending frame ID.
     """
     
     kinematic_trees = {
     "left_hand": {
         "starting_joint_id": model.getJointId("left_shoulder_pitch_joint"),
-        "ending_joint_id": model.getJointId("left_wrist_roll_joint")
+        "ending_joint_id": model.getJointId("left_wrist_roll_joint"),
+        "starting_frame_id": model.getFrameId("left_shoulder_pitch_joint"),
+        "ending_frame_id": model.getFrameId("left_wrist_roll_joint")
     },
     "right_hand": {
         "starting_joint_id": model.getJointId("right_shoulder_pitch_joint"),
-        "ending_joint_id": model.getJointId("right_wrist_roll_joint")
+        "ending_joint_id": model.getJointId("right_wrist_roll_joint"),
+        "starting_frame_id": model.getFrameId("right_shoulder_pitch_joint"),
+        "ending_frame_id": model.getFrameId("right_wrist_roll_joint")
     },
     "left_leg": {
         "starting_joint_id": model.getJointId("left_hip_pitch_joint"),
-        "ending_joint_id": model.getJointId("left_ankle_roll_joint")
+        "ending_joint_id": model.getJointId("left_ankle_roll_joint"),
+        "starting_frame_id": model.getFrameId("left_hip_pitch_joint"),
+        "ending_frame_id": model.getFrameId("left_ankle_roll_joint")
     },
     "right_leg": {
         "starting_joint_id": model.getJointId("right_hip_pitch_joint"),
-        "ending_joint_id": model.getJointId("right_ankle_roll_joint")
+        "ending_joint_id": model.getJointId("right_ankle_roll_joint"),
+        "starting_frame_id": model.getFrameId("right_hip_pitch_joint"),
+        "ending_frame_id": model.getFrameId("right_ankle_roll_joint")
     }
     }
-    return kinematic_trees[tree_name]["starting_joint_id"], kinematic_trees[tree_name]["ending_joint_id"] 
+    tree = kinematic_trees[tree_name]
+    return tree["starting_joint_id"], tree["ending_joint_id"], tree["starting_frame_id"], tree["ending_frame_id"]
 
-def update_visual_frame(viz, model, data, ending_joint_id):
+def compute_subtree_joint_velocities(model, data, q_current, starting_joint_id, ending_joint_id, ending_frame_id, v_desired):
+            """
+            Computes the joint velocities for a given kinematic sub-tree to achieve the desired end-effector velocity.
+
+            Args:
+                model (pin.Model): The Pinocchio model.
+                data (pin.Data): The Pinocchio data.
+                q_current (np.ndarray): The current configuration of the robot.
+                starting_joint_id (int): The joint ID where the kinematic sub-tree starts.
+                ending_joint_id (int): The joint ID where the kinematic sub-tree ends.
+                ending_frame_id (int): The frame ID where the kinematic sub-tree ends.
+                v_desired (np.ndarray): The desired velocity of the end-effector [vx, vy, vz, wx, wy, wz].
+
+            Returns:
+                np.ndarray: The updated configuration of the robot.
+            """
+            J = pin.computeFrameJacobian(model, data, q_current, ending_frame_id, pin.LOCAL)
+
+            # Extract the relevant columns for the end effector movement
+            J_reduced = J[:, model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q]  
+
+            # Compute the pseudo-inverse of the reduced Jacobian
+            J_reduced_pseudo_inv = np.linalg.pinv(J_reduced)
+
+            q_dot_reduced = J_reduced_pseudo_inv @ v_desired
+            
+            q_dot_full = np.zeros(model.nv)
+
+            q_dot_full[model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q] = q_dot_reduced
+            
+            q_current = pin.integrate(model, q_current, q_dot_full * 0.1)
+            
+            return q_current
+
+def update_visual_frame(viz, model, data, ending_joint_frame_id):
   # Need to make joint to frame. 
-  ee_frame = viz.viewer["ending_joint_id"]
+  ee_frame = viz.viewer["ending_joint_frame_id"]
 
-  oMf_hand = data.oMf[ending_joint_id]
+  oMf_hand = data.oMf[ending_joint_frame_id]
   ee_frame.set_transform(oMf_hand.homogeneous)
 
   meshcat_shapes.frame(ee_frame)
 
-def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joint_id, v_desired, duration=1.0, sleep_time=0.1, first_time=True, new_window=False, q_previous=None):
+def simulate_movement(model, 
+                      data, 
+                      viz, 
+                      q_initial, 
+                      starting_joint_id, 
+                      ending_joint_id,
+                      starting_frame_id,
+                      ending_frame_id, 
+                      v_desired, 
+                      duration=1.0, 
+                      sleep_time=0.1, 
+                      first_time=True, 
+                      new_window=False, 
+                      q_previous=None):
     """
     Simulates the movement of a specified kinematic sub-tree for a given duration.
     
@@ -158,37 +214,13 @@ def simulate_movement(model, data, viz, q_initial, starting_joint_id, ending_joi
     while time.time() - start_time < duration:
         
         pin.forwardKinematics(model, data, q_current)
-        pin.updateFramePlacements(model, data)
+        pin.updateFramePlacements(model, data)            
 
-        # Transform the Jacobian from the left wrist to the world frame
-        oMf = data.oMf[ending_joint_id]
-        oRf = oMf.rotation
+        q_current = compute_subtree_joint_velocities(model, data, q_current, starting_joint_id, ending_joint_id, ending_frame_id, v_desired)
 
-        # Calculate the Jacobian from left wrist
-        J = pin.computeJointJacobian(model, data, q_current, ending_joint_id)
-        
-        # Align the Jacobian with the world frame
-        J[:3, :] = oRf @ J[:3, :]
-        J[3:, :] = oRf @ J[3:, :]            
-
-        # Extract the relevant columns for the left hand movement
-        J_reduced = J[:, model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q]  
-
-        # Compute the pseudo-inverse of the reduced Jacobian
-        J_reduced_pseudo_inv = np.linalg.pinv(J_reduced)
-
-        q_dot_reduced = J_reduced_pseudo_inv @ v_desired
-        
-        # print("Reduced q: ", q_dot_reduced)
-
-        q_dot_full = np.zeros(model.nv)
-
-        q_dot_full[model.joints[starting_joint_id].idx_q - 1 : model.joints[ending_joint_id].idx_q] = q_dot_reduced
-        
-        q_current = pin.integrate(model, q_current, q_dot_full * 0.1)
-
-        update_visual_frame(viz, model, data, ending_joint_id)
+        update_visual_frame(viz, model, data, ending_frame_id)
         display_robot_configuration(q_current, viz)
+        
         time.sleep(sleep_time)  # Sleep to simulate real-time update
     
     return q_current 
@@ -207,7 +239,7 @@ q_feet[2] = 0.8
 display_robot_configuration(q_feet, viz)
 
 # Choose one of the following kinematic trees: right hand, left hand, right leg or left leg
-starting_joint_id, ending_joint_id  = get_kinematic_tree("right_hand")
+starting_joint_id, ending_joint_id, starting_frame_id, ending_frame_id  = get_kinematic_tree("right_leg")
 
 # Initialize the configuration
 q_current = q_feet.copy()
@@ -216,4 +248,4 @@ q_current = q_feet.copy()
 v_desired = np.array([0.1, 0., 0., 0., 0., 0.])
 
 # Simulating the inverse kinematics
-q_previous = simulate_movement(model, data, viz, q_current, starting_joint_id, ending_joint_id, v_desired)
+q_previous = simulate_movement(model, data, viz, q_current, starting_joint_id, ending_joint_id, starting_frame_id, ending_frame_id, v_desired)
