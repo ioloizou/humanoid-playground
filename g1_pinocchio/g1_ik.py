@@ -313,8 +313,10 @@ if __name__ == "__main__":
     starting_joint_id, ending_joint_id, starting_frame_id, ending_frame_id = get_kinematic_tree(selected_tree)
 
     # Define the desired velocity of the selected kinematic tree or for the right hand if whole body [vx, vy, vz, wx, wy, wz]
-    v_desired = np.array([0.2, 0., 0., 0., 0., 0.])  # Example velocity
+    v_desired = np.array([0.1, 0., 0., 0., 0., 0.])  # Example velocity
+
+    q_current = q0.copy()
 
     # Simulate the movement and update the frame
-    q_current = simulate_movement(model, data, viz, q0, starting_joint_id, ending_joint_id, starting_frame_id, ending_frame_id, v_desired, whole_body_ik=args.whole_body_ik)
+    q_previous = simulate_movement(model, data, viz, q0, starting_joint_id, ending_joint_id, starting_frame_id, ending_frame_id, v_desired, whole_body_ik=args.whole_body_ik)
 
