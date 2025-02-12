@@ -1,1 +1,4 @@
 .vscode/
+mpc_python/__pycache__/gait_planner.cpython-310.pyc
+mpc_python/__pycache__/mpc.cpython-310.pyc
+mpc_python/__pycache__/srbd_plotting.cpython-310.pyc
